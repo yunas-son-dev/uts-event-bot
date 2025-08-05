@@ -11,6 +11,26 @@ A Discord bot that automatically fetches weekly event information from [Activate
 - Posts formatted messages to a designated Discord channel.
 - Easy to customise and deploy on your own server.
 
+## 📁 Folder Structure
+
+uts-korean-student-bot/
+│
+├── main.py               ← bot logics
+├── bots/
+│   ├── uts_events.py     ← ActivateUTS events
+│   ├── ai_news.py        ← AI News
+│   └── acad_calendar.py  ← Academic Calendar
+│
+├── utils/
+│   └── scraper.py
+│
+├── sent/
+│   └── uts_events.json
+│
+├── .env
+├── requirements.txt
+└── README.md
+
 ## 📸 Example Output
 
 🎉 Upcoming UTS Events This Week!
@@ -29,3 +49,5 @@ A Discord bot that automatically fetches weekly event information from [Activate
 ```bash
 git clone https://github.com/yunas-son-dev/uts-event-bot.git
 cd uts-event-bot
+
+
