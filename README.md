@@ -25,8 +25,11 @@ uts-korean-student-bot/
 │   └── scraper.py
 │
 ├── sent/
-│   └── uts_events.json
+│   └── sent_events.json
 │
+├── .github/
+│   └── workflows/
+│       └── weekly-event-bot.yml  
 ├── .env
 ├── requirements.txt
 └── README.md
