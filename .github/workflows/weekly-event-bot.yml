@@ -2,7 +2,8 @@ name: Weekly UTS Event Bot
 
 on:
   schedule:
-    - cron: '0 23 * * 6'   # Every Sunday 10:00 AEST
+    - cron: '0 0 * * 0'   # Every Sunday 10:00 AEST
+    - cron: '0 23 * * 6'  # Every Sunday 10:00 AEDT 
   workflow_dispatch:
 
 jobs:
