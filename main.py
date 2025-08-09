@@ -112,26 +112,30 @@ async def on_ready():
     else:
         events = await scrape_events()
 
-        msg = "**🎉 Upcoming UTS Events This Week!**\n\n"
-        if not events:
-            msg += "😢 이번 주 예정된 이벤트가 없습니다. 나중에 다시 확인해 주세요!"
-        else:
-            for date, title, desc, link in events:
-                # 기간 이벤트인지 체크
-                is_range = '-' in date
-                # 기간이 긴 이벤트는 description 빼기
-                if is_range:
-                    msg += f"📆 {date} | 📌 {title}\n🔗 <{link}>\n\n"
-                else:
-                    msg += f"📆 {date} | 📌 {title}\n🔗 <{link}>\n📝 {desc}\n\n"
+        # 단일 날짜(기간이 아닌) 이벤트만 필터링
+        single_day_events = [e for e in events if '-' not in e[0]]
 
-        try:
-            # 메시지가 2000자를 넘으면 여러 번 나눠서 전송
-            for chunk in [msg[i:i+2000] for i in range(0, len(msg), 2000)]:
+        if not single_day_events:
+            msg = "**🎉 Upcoming UTS Events This Week!**\n\n😢 이번 주 예정된 단일 날짜 이벤트가 없습니다. 나중에 다시 확인해 주세요!"
+            await channel.send(msg)
+        else:
+            header = "**🎉 Upcoming UTS Events This Week!**\n\n"
+            chunks = []
+            current_chunk = header
+            for date, title, desc, link in single_day_events:
+                event_msg = f"📆 {date} | 📌 {title}\n🔗 <{link}>\n📝 {desc}\n\n"
+                # 만약 현재 chunk에 추가하면 2000자를 넘는다면, 새 chunk로 시작
+                if len(current_chunk) + len(event_msg) > 2000:
+                    chunks.append(current_chunk)
+                    current_chunk = event_msg
+                else:
+                    current_chunk += event_msg
+            if current_chunk.strip():
+                chunks.append(current_chunk)
+
+            for chunk in chunks:
                 await channel.send(chunk)
             print("✅ 메시지 전송 완료")
-        except Exception as e:
-            print("❌ 메시지 전송 실패:", e)
 
     await client.close()
 
