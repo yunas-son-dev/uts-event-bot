@@ -1,20 +1,28 @@
-name: Weekly UTS Event Bot
+name: Weekly UTS + Prosple
 
 on:
   schedule:
-    - cron: '0 0 * * 0'   # Every Sunday 10:00 AEST
-    - cron: '0 23 * * 6'  # Every Sunday 10:00 AEDT 
+    # Sydney Sunday 10:00 with DST handling (AEST & AEDT)
+    - cron: '0 0 * * 0'   # AEST -> 10:00
+    - cron: '0 23 * * 6'  # AEDT -> 10:00
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run-bots:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        bot: [uts_events, prosple]  # run both at the same time
+    env:
+      BOT_NAME: ${{ matrix.bot }}
+      DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
+      UTS_EVENTS_CHANNEL_ID: ${{ secrets.UTS_EVENTS_CHANNEL_ID }}
+      PROSPLE_CHANNEL_ID: ${{ secrets.PROSPLE_CHANNEL_ID }}
+      ADMIN_WEBHOOK_URL: ${{ secrets.ADMIN_WEBHOOK_URL }
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -24,8 +32,15 @@ jobs:
           pip install -r requirements.txt
           playwright install chromium
 
-      - name: Run UTS event bot
-        env:
-          DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
-          DISCORD_CHANNEL_ID: ${{ secrets.DISCORD_CHANNEL_ID }}
+      - name: Run bot
         run: python main.py
+      
+      # Upload debug artifacts if the bot fails
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prosple-debug-${{ matrix.bot }}
+          path: |
+            prosple_debug_*.html
+            prosple_debug_*.png
