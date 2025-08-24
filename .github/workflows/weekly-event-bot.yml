@@ -18,7 +18,7 @@ jobs:
       DISCORD_TOKEN: ${{ secrets.DISCORD_TOKEN }}
       UTS_EVENTS_CHANNEL_ID: ${{ secrets.UTS_EVENTS_CHANNEL_ID }}
       PROSPLE_CHANNEL_ID: ${{ secrets.PROSPLE_CHANNEL_ID }}
-      ADMIN_WEBHOOK_URL: ${{ secrets.ADMIN_WEBHOOK_URL }
+      ADMIN_WEBHOOK_URL: ${{ secrets.ADMIN_WEBHOOK_URL }}
     steps:
       - uses: actions/checkout@v4
 
