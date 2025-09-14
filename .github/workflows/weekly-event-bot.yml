@@ -2,9 +2,8 @@ name: Weekly UTS + Prosple
 
 on:
   schedule:
-    # Sydney Sunday 10:00 with DST handling (AEST & AEDT)
     - cron: '0 0 * * 0'   # AEST -> 10:00
-    - cron: '0 23 * * 6'  # AEDT -> 10:00
+
   workflow_dispatch:
 
 jobs:
