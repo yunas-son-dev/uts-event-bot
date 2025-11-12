@@ -2,7 +2,7 @@ name: Weekly UTS + Prosple
 
 on:
   schedule:
-    - cron: '0 0 * * 0'   # AEST -> 10:00
+    - cron: '0 22 * * 6'   # AEST -> 08:00
 
   workflow_dispatch:
 
