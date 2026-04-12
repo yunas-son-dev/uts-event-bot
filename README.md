@@ -41,23 +41,6 @@ uts-event-bot/
 | `GIST_TOKEN` | GitHub Personal Access Token with `gist` scope |
 | `GIST_ID` | ID of the Gist storing deduplication data |
 
-## Local Setup
-
-```bash
-git clone https://github.com/yunas-son-dev/uts-event-bot.git
-cd uts-event-bot
-
-pip install -r requirements.txt
-playwright install chromium
-
-# Copy and fill in your environment variables
-cp .env.example .env
-
-# Dry run (prints output, sends nothing)
-python scraper.py --dry-run
-python bots/acad_calendar.py --dry-run
-```
-
 ## Example Output
 
 **Events**
