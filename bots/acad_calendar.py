@@ -71,33 +71,49 @@ def fetch_month_events(month_name: str) -> list[dict]:
     return events
 
 
-def build_message(events: list[dict], year: int, month_name: str) -> str:
+def build_chunks(events: list[dict], year: int, month_name: str) -> list[str]:
+    """Split events into <=1900-char messages, breaking only between bullet lines."""
     if not events:
-        return (
+        return [
             f"📅 {year}년 {month_name} UTS Principal Dates 📅\n\n"
             "이번 달에는 등록된 학사 일정이 없습니다."
-        )
-    lines = [f"📅 {year}년 {month_name} UTS Principal Dates 📅\n"]
+        ]
+
+    header = f"📅 {year}년 {month_name} UTS Principal Dates 📅\n\n"
+    chunks: list[str] = []
+    cur = header
+
     for e in events:
-        lines.append(f"- {e['date']}일: {e['event']}")
-    return "\n".join(lines)
+        line = f"- {e['date']}일: {e['event']}\n"
+        if len(cur) + len(line) > 1900:
+            chunks.append(cur.rstrip())
+            cur = line
+        else:
+            cur += line
+
+    if cur.strip():
+        chunks.append(cur.rstrip())
+
+    return chunks
 
 
-def send_discord(message: str) -> bool:
-    """POST to ACADEMIC_WEBHOOK_URL. Returns True on success."""
+def send_discord(chunks: list[str]) -> bool:
+    """POST each chunk to ACADEMIC_WEBHOOK_URL. Returns True only if all succeed."""
     webhook_url = os.environ.get("ACADEMIC_WEBHOOK_URL")
     if not webhook_url:
         print("[acad_calendar] ACADEMIC_WEBHOOK_URL not set.")
         return False
-    # Discord limit: 2000 chars. Truncate with a note rather than silently dropping.
-    if len(message) > 1990:
-        message = message[:1987] + "..."
-    resp = requests.post(webhook_url, json={"content": message}, timeout=10)
-    if resp.status_code == 204:
-        print("[acad_calendar] Message sent.")
-        return True
-    print(f"[acad_calendar] Send failed: {resp.status_code} {resp.text}")
-    return False
+
+    all_ok = True
+    for i, chunk in enumerate(chunks, 1):
+        resp = requests.post(webhook_url, json={"content": chunk}, timeout=10)
+        if resp.status_code == 204:
+            print(f"[acad_calendar] Chunk {i}/{len(chunks)} sent.")
+        else:
+            print(f"[acad_calendar] Chunk {i}/{len(chunks)} failed: {resp.status_code} {resp.text}")
+            all_ok = False
+
+    return all_ok
 
 
 def main() -> None:
@@ -123,15 +139,18 @@ def main() -> None:
         print(f"[acad_calendar] Fetch error: {e}")
         sys.exit(1)
 
-    msg = build_message(events, now.year, month_name)
-    print(f"[acad_calendar] {len(events)} events for {month_name} {now.year}")
+    chunks = build_chunks(events, now.year, month_name)
+    print(f"[acad_calendar] {len(events)} events → {len(chunks)} chunk(s) for {month_name} {now.year}")
 
     if args.dry_run:
         print("--- DRY RUN ---")
-        print(msg)
+        for i, chunk in enumerate(chunks, 1):
+            print(f"[chunk {i}/{len(chunks)}]")
+            print(chunk)
+            print()
         return
 
-    if not send_discord(msg):
+    if not send_discord(chunks):
         sys.exit(1)
 
 
