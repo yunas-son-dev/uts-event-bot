@@ -1,11 +1,23 @@
 # acad_calendar.py
+"""
+Scrapes the UTS Principal Dates page and posts this month's events to Discord.
+
+Page structure: one <h3 class="sans-serif-heading"> per month, followed
+immediately by a <table> with DATE | WHAT'S ON columns.
+No JavaScript / Playwright required — plain requests + BeautifulSoup.
+
+Usage:
+    python bots/acad_calendar.py
+    python bots/acad_calendar.py --dry-run
+"""
+
 import argparse
 import os
 import sys
-import requests
 from datetime import datetime
+
+import requests
 from bs4 import BeautifulSoup
-from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -13,133 +25,74 @@ load_dotenv()
 YEAR = datetime.now().year
 URL = (
     f"https://www.uts.edu.au/for-students/current-students/"
-    f"managing-your-course/important-dates/academic-year-dates/"
-    f"{YEAR}-academic-year-dates"
+    f"managing-your-course/important-dates/principal-dates/"
+    f"{YEAR}-principal-dates"
 )
 
-SEMESTERS = {
-    "Autumn": "collapsible-0",
-    "Spring": "collapsible-1",
-    "Summer": "collapsible-2",
-}
 
-MONTHS = {
-    "january": 1, "february": 2, "march": 3, "april": 4,
-    "may": 5, "june": 6, "july": 7, "august": 8,
-    "september": 9, "october": 10, "november": 11, "december": 12,
-}
+def fetch_month_events(month_name: str) -> list[dict]:
+    """
+    Fetch all DATE/WHAT'S ON rows for *month_name* (e.g. "April")
+    from the UTS Principal Dates page.
+    Returns a list of {"date": str, "event": str} dicts.
+    """
+    resp = requests.get(URL, headers={"User-Agent": "Mozilla/5.0"}, timeout=15)
+    resp.raise_for_status()
 
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-def parse_date_range(date_str: str):
-    date_str = date_str.lower()
-    months_in_text = [MONTHS[m] for m in MONTHS if m in date_str]
-    if not months_in_text:
-        return None
-    return months_in_text[0], months_in_text[-1]
+    # Find the <h3> whose text starts with the target month name
+    target_h3 = None
+    for h3 in soup.find_all("h3", class_="sans-serif-heading"):
+        if h3.get_text(strip=True).startswith(month_name):
+            target_h3 = h3
+            break
 
+    if target_h3 is None:
+        print(f"[acad_calendar] No heading found for '{month_name}' on {URL}")
+        return []
 
-def fetch_all_events() -> list[dict]:
-    """Scrape all semester events from the UTS academic calendar page."""
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        try:
-            page = browser.new_page()
-            page.goto(URL, timeout=30_000, wait_until="domcontentloaded")
+    # The month table is the first <table> after that heading
+    table = target_h3.find_next("table")
+    if table is None:
+        print(f"[acad_calendar] No table found after '{month_name}' heading")
+        return []
 
-            for sem_name, sem_id in SEMESTERS.items():
-                # Click the collapsible toggle (button that controls the section)
-                # The UTS site uses aria-controls or data-target to link toggle -> panel
-                try:
-                    toggle = page.locator(
-                        f"[aria-controls='{sem_id}'], "
-                        f"button[data-target='#{sem_id}'], "
-                        f"[data-toggle='collapse'][href='#{sem_id}']"
-                    ).first
-                    if toggle.count():
-                        toggle.click()
-                    else:
-                        # Fallback: click the collapsible div itself if it has a heading
-                        page.locator(f"#{sem_id}").first.click()
-                except Exception as e:
-                    print(f"[acad_calendar] Could not click toggle for {sem_name}: {e}")
-
-                # Wait for a table to become visible inside this collapsible
-                try:
-                    page.wait_for_selector(
-                        f"#{sem_id} table",
-                        state="visible",
-                        timeout=5_000,
-                    )
-                except PlaywrightTimeout:
-                    # Fallback: wait 2s and hope content is now in the DOM
-                    page.wait_for_timeout(2_000)
-
-            html = page.content()
-        finally:
-            browser.close()
-
-    soup = BeautifulSoup(html, "html.parser")
     events: list[dict] = []
-
-    for sem_name, sem_id in SEMESTERS.items():
-        collapsible = soup.find("div", id=sem_id)
-        if not collapsible:
-            print(f"[acad_calendar] Section not found: #{sem_id}")
-            continue
-
-        tables = collapsible.find_all("table")
-        if not tables:
-            print(f"[acad_calendar] No tables found in #{sem_id} – collapsible may not have expanded")
-
-        for table in tables:
-            for row in table.find_all("tr"):
-                cols = row.find_all("td")
-                if len(cols) != 2:
-                    continue
-                event_name = cols[0].get_text(strip=True)
-                date_range = cols[1].get_text(strip=True)
-                parsed_range = parse_date_range(date_range)
-                events.append({
-                    "session": sem_name,
-                    "event": event_name,
-                    "date_range": date_range,
-                    "month_range": parsed_range,
-                })
+    for row in table.find_all("tr"):
+        cols = row.find_all("td")
+        if len(cols) < 2:
+            continue  # skip header row (th) and malformed rows
+        date_text = cols[0].get_text(separator=" ", strip=True)
+        event_text = cols[1].get_text(separator=" ", strip=True)
+        if date_text and event_text:
+            events.append({"date": date_text, "event": event_text})
 
     return events
 
 
-def get_events_for_month(events: list[dict], month: int) -> list[dict]:
-    """Filter to events that cover the given month number."""
-    result = []
-    for e in events:
-        if not e["month_range"]:
-            continue
-        start, end = e["month_range"]
-        if start <= month <= end:
-            result.append(e)
-    return result
-
-
-def build_message(month_events: list[dict], year: int, month_name: str) -> str:
-    if not month_events:
+def build_message(events: list[dict], year: int, month_name: str) -> str:
+    if not events:
         return (
-            f"📅 {year}년 {month_name} UTS Academic Events 📅\n\n"
+            f"📅 {year}년 {month_name} UTS Principal Dates 📅\n\n"
             "이번 달에는 등록된 학사 일정이 없습니다."
         )
-    lines = [f"📅 {year}년 {month_name} UTS Academic Events 📅\n"]
-    for e in month_events:
-        lines.append(f"- [{e['session']}] {e['event']}: {e['date_range']}")
+    lines = [f"📅 {year}년 {month_name} UTS Principal Dates 📅\n"]
+    for e in events:
+        lines.append(f"- {e['date']}일: {e['event']}")
     return "\n".join(lines)
 
 
-def send_discord_via_webhook(message: str) -> bool:
-    """Post message to ACADEMIC_WEBHOOK_URL. Returns True on success."""
+def send_discord(message: str) -> bool:
+    """POST to ACADEMIC_WEBHOOK_URL. Returns True on success."""
     webhook_url = os.environ.get("ACADEMIC_WEBHOOK_URL")
     if not webhook_url:
         print("[acad_calendar] ACADEMIC_WEBHOOK_URL not set.")
         return False
-    resp = requests.post(webhook_url, json={"content": message})
+    # Discord limit: 2000 chars. Truncate with a note rather than silently dropping.
+    if len(message) > 1990:
+        message = message[:1987] + "..."
+    resp = requests.post(webhook_url, json={"content": message}, timeout=10)
     if resp.status_code == 204:
         print("[acad_calendar] Message sent.")
         return True
@@ -147,8 +100,13 @@ def send_discord_via_webhook(message: str) -> bool:
     return False
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Post UTS academic calendar to Discord.")
+def main() -> None:
+    # Ensure UTF-8 output on Windows terminals that default to CP1252.
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    parser = argparse.ArgumentParser(
+        description="Post UTS principal dates for this month to Discord."
+    )
     parser.add_argument(
         "--dry-run",
         action="store_true",
@@ -157,17 +115,23 @@ def main():
     args = parser.parse_args()
 
     now = datetime.now()
-    all_events = fetch_all_events()
-    month_events = get_events_for_month(all_events, now.month)
-    msg = build_message(month_events, now.year, now.strftime("%B"))
+    month_name = now.strftime("%B")  # e.g. "April"
+
+    try:
+        events = fetch_month_events(month_name)
+    except Exception as e:
+        print(f"[acad_calendar] Fetch error: {e}")
+        sys.exit(1)
+
+    msg = build_message(events, now.year, month_name)
+    print(f"[acad_calendar] {len(events)} events for {month_name} {now.year}")
 
     if args.dry_run:
         print("--- DRY RUN ---")
         print(msg)
         return
 
-    success = send_discord_via_webhook(msg)
-    if not success:
+    if not send_discord(msg):
         sys.exit(1)
 
 
