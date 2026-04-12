@@ -1,0 +1,6 @@
+discord.py
+python-dotenv
+playwright
+requests
+matplotlib
+beautifulsoup4
