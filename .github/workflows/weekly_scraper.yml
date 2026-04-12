@@ -2,8 +2,7 @@ name: Weekly Event Scraper
 
 on:
   schedule:
-    # Monday 9am UTC = Monday 7pm Sydney (AEST)
-    - cron: "0 9 * * 1"
+    - cron: "0 0 * * 1"   # Monday midnight UTC = 10am Sydney AEST
   workflow_dispatch:
 
 jobs:
@@ -30,4 +29,6 @@ jobs:
           EVENTS_WEBHOOK_URL: ${{ secrets.EVENTS_WEBHOOK_URL }}
           PROSPLE_WEBHOOK_URL: ${{ secrets.PROSPLE_WEBHOOK_URL }}
           ADMIN_WEBHOOK_URL: ${{ secrets.ADMIN_WEBHOOK_URL }}
+          GIST_TOKEN: ${{ secrets.GIST_TOKEN }}
+          GIST_ID: ${{ secrets.GIST_ID }}
         run: python scraper.py

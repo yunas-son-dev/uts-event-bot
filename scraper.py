@@ -1,78 +1,153 @@
 """
-scraper.py — main orchestrator for GitHub Actions.
+scraper.py — main orchestrator for GitHub Actions weekly run.
 
-Runs both scrapers, deduplicates, sends to Discord webhooks, and posts
-an admin summary.  Pass --dry-run to print everything without sending
-or updating the JSON files.
+Runs:
+  1. UTS Events (activateuts.com.au) → #uts-이벤트 webhook
+  2. Prosple IT jobs (Sydney)        → #채용정보 webhook
+
+Deduplicates against GitHub Gist (sent_events.json / sent_prosple.json).
+Sends admin summary to ADMIN_WEBHOOK_URL.
 
 Usage:
-    python scraper.py
-    python scraper.py --dry-run
+  python scraper.py            # live run
+  python scraper.py --dry-run  # print only, no webhook / no Gist update
 """
 
 import argparse
 import asyncio
 import os
 import sys
+import pathlib
 
 import requests
 from dotenv import load_dotenv
 
-from bots.prosple import scrape_prosple_it
-from bots.uts_events import format_discord_message, scrape_uts_events_week_next
-from utils.dedupe import DEFAULT_EVENTS_PATH, DEFAULT_PROSPLE_PATH, load_sent, save_sent
-from utils.notify import notify
-
 load_dotenv()
 
-EVENTS_WEBHOOK = os.getenv("EVENTS_WEBHOOK_URL")
-PROSPLE_WEBHOOK = os.getenv("PROSPLE_WEBHOOK_URL")
+# path setup so scraper.py (root) can import from utils/ and bots/
+sys.path.insert(0, str(pathlib.Path(__file__).parent / "utils"))
+sys.path.insert(0, str(pathlib.Path(__file__).parent / "bots"))
+
+from dedupe import (
+    load_sent_events, save_sent_events,
+    load_sent_prosple, save_sent_prosple,
+)
+from notify import notify
+from prosple import scrape_prosple_it
+from uts_events import format_discord_message, scrape_uts_events_week_next
+
+EVENTS_WEBHOOK_URL = os.getenv("EVENTS_WEBHOOK_URL")
+PROSPLE_WEBHOOK_URL = os.getenv("PROSPLE_WEBHOOK_URL")
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _send_webhook(webhook_url: str, message: str) -> bool:
-    """POST a single message to a Discord webhook. Returns True on success."""
-    resp = requests.post(webhook_url, json={"content": message}, timeout=10)
-    if resp.status_code == 204:
-        return True
-    print(f"[scraper] Webhook error {resp.status_code}: {resp.text}")
-    return False
+def _post(webhook_url: str, message: str) -> bool:
+    try:
+        resp = requests.post(webhook_url, json={"content": message}, timeout=10)
+        return resp.status_code == 204
+    except Exception as e:
+        print(f"[scraper] Webhook error: {e}")
+        return False
 
 
-def _send_all(webhook_url: str, messages: list[str], dry_run: bool) -> int:
-    """Send a list of chunked messages. Returns count of messages sent."""
-    sent = 0
-    for msg in messages:
-        if dry_run:
-            print(msg)
+def _send_messages(webhook_url: str | None, messages: list[str], dry_run: bool) -> int:
+    if not messages:
+        return 0
+    if dry_run or not webhook_url:
+        for m in messages:
+            print(m)
             print("---")
+        return len(messages)
+    sent = 0
+    for m in messages:
+        if _post(webhook_url, m):
             sent += 1
         else:
-            if _send_webhook(webhook_url, msg):
-                sent += 1
+            print("[scraper] Failed to send message chunk.")
     return sent
 
 
-def _chunk_prosple(items: list[tuple]) -> list[str]:
-    """Format Prosple job tuples into <=1900-char Discord messages."""
-    if not items:
-        return ["**🚀 New IT Roles (Prosple)**\n\n😌 No new jobs this week."]
+# ---------------------------------------------------------------------------
+# Events
+# ---------------------------------------------------------------------------
 
-    header = "**🚀 New IT Roles (Prosple)**\n\n"
+async def run_events(dry_run: bool) -> tuple[int, int]:
+    print("[scraper] --- UTS Events ---")
+    sent_keys = load_sent_events()
+
+    try:
+        events = await scrape_uts_events_week_next()
+    except asyncio.TimeoutError:
+        print("[scraper] UTS Events scrape timed out.")
+        notify("❌ UTS Events scrape timed out.")
+        return 0, 0
+
+    print(f"[scraper] Scraped {len(events)} events total.")
+    new_events = [e for e in events if e[3] not in sent_keys]
+    skipped = len(events) - len(new_events)
+    print(f"[scraper] New: {len(new_events)}, Skipped (dupe): {skipped}")
+
+    if new_events:
+        messages = format_discord_message(new_events)
+        _send_messages(EVENTS_WEBHOOK_URL, messages, dry_run)
+        if not dry_run:
+            sent_keys.update(e[3] for e in new_events)
+            save_sent_events(sent_keys)
+
+    return len(new_events), skipped
+
+
+# ---------------------------------------------------------------------------
+# Prosple
+# ---------------------------------------------------------------------------
+
+async def run_prosple(dry_run: bool) -> tuple[int, int]:
+    print("[scraper] --- Prosple Jobs ---")
+    sent_keys = load_sent_prosple()
+
+    try:
+        jobs = await asyncio.wait_for(scrape_prosple_it(), timeout=300)
+    except asyncio.TimeoutError:
+        print("[scraper] Prosple scrape timed out.")
+        notify("❌ Prosple scrape timed out.")
+        return 0, 0
+
+    print(f"[scraper] Scraped {len(jobs)} jobs total.")
+    new_jobs = [j for j in jobs if j[5] not in sent_keys]
+    skipped = len(jobs) - len(new_jobs)
+    print(f"[scraper] New: {len(new_jobs)}, Skipped (dupe): {skipped}")
+
+    if new_jobs:
+        messages = _format_jobs(new_jobs)
+        _send_messages(PROSPLE_WEBHOOK_URL, messages, dry_run)
+        if not dry_run:
+            sent_keys.update(j[5] for j in new_jobs)
+            save_sent_prosple(sent_keys)
+
+    return len(new_jobs), skipped
+
+
+def _format_jobs(jobs: list[tuple]) -> list[str]:
+    if not jobs:
+        return []
+
+    header = "**💼 New IT Graduate Jobs & Internships in Sydney!**\n\n"
     chunks: list[str] = []
     cur = header
 
-    for company, role, location, salary, start_date, link in items:
-        sal_part = f" | 💰 {salary}" if salary else ""
-        block = (
-            f"🏢 **{company}** 🔗 <{link}>\n"
-            f"💼 {role}\n"
-            f"📍 {location}{sal_part}\n"
-            f"{'—' * 30}\n\n"
-        )
+    for company, role, location, salary, start_date, link in jobs:
+        block = f"🏢 **{company}** | {role}\n"
+        if location:
+            block += f"📍 {location}\n"
+        if salary:
+            block += f"💰 {salary}\n"
+        if start_date:
+            block += f"🗓 Start: {start_date}\n"
+        block += f"🔗 <{link}>\n\n"
+
         if len(cur) + len(block) > 1900:
             chunks.append(cur)
             cur = block
@@ -88,113 +163,27 @@ def _chunk_prosple(items: list[tuple]) -> list[str]:
 # Main
 # ---------------------------------------------------------------------------
 
-async def run(dry_run: bool) -> None:
-    events_sent = events_skipped = 0
-    jobs_sent = jobs_skipped = 0
-    errors: list[str] = []
+async def main(dry_run: bool) -> None:
+    print(f"[scraper] Starting. dry_run={dry_run}")
 
-    # --- UTS Events ---
-    print("[scraper] Running uts_events scraper...")
-    try:
-        raw_events = await scrape_uts_events_week_next()
-    except asyncio.TimeoutError:
-        msg = "uts_events scraper timed out (>5 min)"
-        print(f"[scraper] ERROR: {msg}")
-        errors.append(msg)
-        raw_events = []
+    events_new, events_skip = await run_events(dry_run)
+    jobs_new, jobs_skip = await run_prosple(dry_run)
 
-    sent_events = load_sent(DEFAULT_EVENTS_PATH)
-    fresh_events: list[tuple] = []
-    new_event_keys: list[str] = []
-
-    for date_str, title, desc, link in raw_events:
-        key = link or f"{date_str}|{title}"
-        if key in sent_events:
-            events_skipped += 1
-        else:
-            fresh_events.append((date_str, title, desc, link))
-            new_event_keys.append(key)
-
-    print(f"[scraper] Events: {len(fresh_events)} new, {events_skipped} dupes")
-
-    if EVENTS_WEBHOOK or dry_run:
-        messages = format_discord_message(fresh_events)
-        webhook = EVENTS_WEBHOOK or ""
-        n = _send_all(webhook, messages, dry_run)
-        events_sent = len(fresh_events)
-        if not dry_run and n == len(messages):
-            for k in new_event_keys:
-                sent_events.add(k)
-            save_sent(sent_events, DEFAULT_EVENTS_PATH)
-    else:
-        print("[scraper] EVENTS_WEBHOOK_URL not set – skipping.")
-
-    # --- Prosple Jobs ---
-    print("[scraper] Running prosple scraper...")
-    try:
-        raw_jobs = await asyncio.wait_for(scrape_prosple_it(), timeout=300)
-    except asyncio.TimeoutError:
-        msg = "prosple scraper timed out (>5 min)"
-        print(f"[scraper] ERROR: {msg}")
-        errors.append(msg)
-        raw_jobs = []
-
-    sent_prosple = load_sent(DEFAULT_PROSPLE_PATH)
-    fresh_jobs: list[tuple] = []
-    new_job_keys: list[str] = []
-
-    for company, role, location, salary, start_date, link in raw_jobs:
-        key = link or f"{company}|{role}"
-        if key in sent_prosple:
-            jobs_skipped += 1
-        else:
-            fresh_jobs.append((company, role, location, salary, start_date, link))
-            new_job_keys.append(key)
-
-    print(f"[scraper] Jobs: {len(fresh_jobs)} new, {jobs_skipped} dupes")
-
-    if PROSPLE_WEBHOOK or dry_run:
-        messages = _chunk_prosple(fresh_jobs)
-        webhook = PROSPLE_WEBHOOK or ""
-        n = _send_all(webhook, messages, dry_run)
-        jobs_sent = len(fresh_jobs)
-        if not dry_run and n == len(messages):
-            for k in new_job_keys:
-                sent_prosple.add(k)
-            save_sent(sent_prosple, DEFAULT_PROSPLE_PATH)
-    else:
-        print("[scraper] PROSPLE_WEBHOOK_URL not set – skipping.")
-
-    # --- Admin summary ---
-    skipped_total = events_skipped + jobs_skipped
     summary = (
-        f"✅ Sent {events_sent} events, {jobs_sent} jobs. "
-        f"Skipped {skipped_total} dupes."
+        f"{'[DRY RUN] ' if dry_run else ''}✅ Weekly scrape done.\n"
+        f"Events — sent: {events_new}, dupes skipped: {events_skip}\n"
+        f"Jobs   — sent: {jobs_new}, dupes skipped: {jobs_skip}"
     )
-    if errors:
-        summary += "\n⚠️ Errors:\n" + "\n".join(f"  • {e}" for e in errors)
-
-    print(f"[scraper] Summary: {summary}")
-
-    if dry_run:
-        print("[scraper] DRY RUN complete – nothing was sent or saved.")
-    else:
-        notify(summary)
-
-    if errors:
-        sys.exit(1)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Run all Discord event scrapers.")
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Print output without sending webhooks or updating sent JSON files.",
-    )
-    args = parser.parse_args()
-    asyncio.run(run(args.dry_run))
+    print(f"\n[scraper] {summary}")
+    notify(summary)
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print output only; do not send webhooks or update Gist.",
+    )
+    args = parser.parse_args()
+    asyncio.run(main(args.dry_run))
