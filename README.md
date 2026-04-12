@@ -1,32 +1,35 @@
 # uts-event-bot
 
-A GitHub Actions-based bot that automatically delivers UTS campus events, IT job listings, and academic calendar updates to a Discord server for UTS Korean international students.
+A GitHub Actions-based bot that automatically delivers UTS campus events, IT job listings, academic calendar updates, and rotating Discord invite links for the UTS Korean IT student community.
 
 ## Features
 
-- **Weekly UTS Events** — Scrapes [ActivateUTS](https://www.activateuts.com.au/events/) and posts next week's events every Monday at 10am Sydney time
-- **Weekly IT Jobs** — Scrapes [Prosple](https://au.prosple.com) for new Sydney-based IT graduate roles and internships
-- **Monthly Academic Calendar** — Posts UTS academic dates on the 1st of every month
-- **Deduplication** — Tracks sent items via GitHub Gist to avoid reposting
+- Weekly UTS Events — Scrapes ActivateUTS and posts next week's events every Monday
+- Weekly IT Jobs — Scrapes Sydney-based IT graduate roles and internships from Prosple
+- Monthly Academic Calendar — Posts important UTS academic dates on the 1st of every month
+- Discord Invite Rotation — Automatically refreshes the latest invite link for onboarding
+- Deduplication — Uses GitHub Gist to prevent duplicate event and job posts
 
 ## Folder Structure
 
-```
+```text
 uts-event-bot/
-├── scraper.py                    # Weekly entry point (events + jobs)
+├── scraper.py
 ├── bots/
-│   ├── acad_calendar.py          # Monthly academic calendar scraper
-│   ├── uts_events.py             # ActivateUTS weekly events scraper
-│   └── prosple.py                # Prosple IT jobs scraper
+│   ├── acad_calendar.py
+│   ├── discord_invite.py
+│   ├── prosple.py
+│   └── uts_events.py
 ├── utils/
-│   ├── dedupe.py                 # GitHub Gist-backed deduplication
-│   └── notify.py                 # Admin webhook notifications
+│   ├── dedupe.py
+│   └── notify.py
 ├── .github/
 │   └── workflows/
-│       ├── weekly_scraper.yml    # Runs every Monday 10am Sydney (AEST)
-│       └── monthly_calendar.yml  # Runs 1st of every month
-├── .env                          # Local environment variables (not committed)
+│       ├── monthly_calendar.yml
+│       ├── refresh_discord_invite.yml
+│       └── weekly_scraper.yml
 ├── requirements.txt
+├── .gitignore
 └── README.md
 ```
 
