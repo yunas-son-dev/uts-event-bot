@@ -101,13 +101,13 @@ async def run_events(dry_run: bool) -> tuple[int, int]:
 
     print(f"[scraper] Scraped {len(events)} events total.")
 
-    # ✅ keep original parser untouched
-    # apply single-day display policy only here
+    # keep source parser untouched, exclude only date ranges
     single_day_events = [
         e for e in events
-        if "-" not in e[0] and "–" not in e[0]
+        if not any(d in e[0] for d in ["-", "–", "—"])
     ]
-        print(
+
+    print(
         f"[scraper] Filtered to {len(single_day_events)} "
         f"single-day events."
     )
@@ -126,7 +126,6 @@ async def run_events(dry_run: bool) -> tuple[int, int]:
             save_sent_events(sent_keys)
 
     return len(new_events), skipped
-
 
 # ---------------------------------------------------------------------------
 # Prosple
