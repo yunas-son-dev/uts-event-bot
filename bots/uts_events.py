@@ -3,13 +3,12 @@ import os
 import re
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
-
 from playwright.async_api import async_playwright, TimeoutError as PlaywrightTimeout
 
 BASE_URL = "https://www.activateuts.com.au/events/?orderby=featured"
 CARDS_SELECTOR = "div.tile.tile--event"
-SCRAPE_TIMEOUT = 300  # 5 minutes
-MAX_PAGES = 10  # Hard cap — site may return the same page indefinitely
+SCRAPE_TIMEOUT = 300
+MAX_PAGES = 10
 
 DATE_RE = re.compile(
     r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)",
@@ -27,7 +26,6 @@ def _sydney_today() -> date:
 
 
 def _next_week_range_sydney() -> tuple[date, date]:
-    """Next Monday .. Sunday in Australia/Sydney."""
     today = _sydney_today()
     this_monday = today - timedelta(days=today.weekday())
     next_monday = this_monday + timedelta(days=7)
@@ -36,7 +34,6 @@ def _next_week_range_sydney() -> tuple[date, date]:
 
 
 def _parse_dates(text: str) -> list[date]:
-    """Extract all recognisable dates from a string."""
     today = _sydney_today()
     results = []
 
@@ -47,21 +44,17 @@ def _parse_dates(text: str) -> list[date]:
 
         try:
             d = date(year, mon, day)
-
-            # rollover for year boundary
             if (d - today).days < -180:
                 d = date(year + 1, mon, day)
-
             results.append(d)
-
         except ValueError:
-            continue
+            pass
 
     return results
 
 
 async def _scrape() -> list[tuple[str, str, str, str]]:
-    events: list[tuple[str, str, str, str]] = []
+    events = []
     start_of_week, end_of_week = _next_week_range_sydney()
     today = _sydney_today()
 
@@ -70,11 +63,10 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
 
         try:
             page_num = 1
-            prev_first_url: str | None = None
+            prev_first_url = None
 
             while True:
                 if page_num > MAX_PAGES:
-                    print(f"[uts_events] MAX_PAGES ({MAX_PAGES}) reached – stopping.")
                     break
 
                 url = (
@@ -95,13 +87,10 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
 
                     cards = page.locator(CARDS_SELECTOR)
                     count = await cards.count()
-                    print(f"[uts_events] Page {page_num}: {count} cards")
 
                     if count == 0:
-                        print("[uts_events] No cards – stopping pagination.")
                         break
 
-                    # repeated pagination guard
                     first_url_el = cards.nth(0).locator("a[href*='/events/']").first
                     curr_first_url = (
                         await first_url_el.get_attribute("href") or ""
@@ -110,10 +99,6 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                     )
 
                     if curr_first_url and curr_first_url == prev_first_url:
-                        print(
-                            f"[uts_events] Page {page_num} repeats page {page_num - 1} "
-                            f"– pagination exhausted, stopping."
-                        )
                         break
 
                     prev_first_url = curr_first_url
@@ -123,7 +108,6 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                         card = cards.nth(i)
 
                         try:
-                            # --- Link ---
                             link = ""
                             link_el = card.locator("a[href*='/events/']").first
                             if await link_el.count():
@@ -134,15 +118,8 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                                     else f"https://www.activateuts.com.au{href}"
                                 )
 
-                            # --- Title ---
                             title = ""
-                            for sel in [
-                                "h3",
-                                "h2",
-                                ".tile__title",
-                                ".tile__name",
-                                "[class*='title']",
-                            ]:
+                            for sel in ["h3", "h2", ".tile__title", ".tile__name", "[class*='title']"]:
                                 el = card.locator(sel).first
                                 if await el.count():
                                     title = (await el.inner_text()).strip()
@@ -152,7 +129,6 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                             if not title:
                                 continue
 
-                            # --- Date text ---
                             date_text = ""
                             for sel in [
                                 ".tile__badge",
@@ -171,7 +147,6 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                             if not date_text:
                                 date_text = await card.inner_text()
 
-                            # --- Description ---
                             desc = ""
                             for sel in [".tile__excerpt", ".tile__summary", "p"]:
                                 el = card.locator(sel).first
@@ -192,20 +167,21 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                             if recently_or_upcoming and event_start <= end_of_week:
                                 all_past_end = False
 
-                            # ✅ next week overlap + single-day only
                             if event_start <= end_of_week and event_end >= start_of_week:
-                                if event_start != event_end:
-                                    continue
+                                if event_start == event_end:
+                                    date_str = event_start.strftime("%-d %b")
+                                else:
+                                    date_str = (
+                                        f"{event_start.strftime('%-d %b')}"
+                                        f" – {event_end.strftime('%-d %b')}"
+                                    )
 
-                                date_str = event_start.strftime("%-d %b")
                                 events.append((date_str, title, desc, link))
 
-                        except Exception as e:
-                            print(f"[uts_events] Card {i} error: {e}")
+                        except Exception:
                             continue
 
                     if all_past_end:
-                        print("[uts_events] All cards past end of next week – stopping.")
                         break
 
                     page_num += 1
@@ -219,19 +195,19 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
     return events
 
 
-async def scrape_uts_events_week_next() -> list[tuple[str, str, str, str]]:
-    """Return single-day events for next week (Mon–Sun, Sydney time)."""
+async def scrape_uts_events_week_next():
     return await asyncio.wait_for(_scrape(), timeout=SCRAPE_TIMEOUT)
 
 
-def format_discord_message(events: list[tuple[str, str, str, str]]) -> list[str]:
-    """Split events into <=1900-char Discord messages."""
-    header = "**🎉 Upcoming UTS Events Next Week!**\n\n"
-
+def format_discord_message(events):
     if not events:
-        return [header + "😌 No single-day events found for next week."]
+        return [
+            "**🎉 Upcoming UTS Events Next Week!**\n\n"
+            "😌 No events found for next week."
+        ]
 
-    chunks: list[str] = []
+    header = "**🎉 Upcoming UTS Events Next Week!**\n\n"
+    chunks = []
     cur = header
 
     for date_str, title, desc, link in events:
@@ -241,7 +217,7 @@ def format_discord_message(events: list[tuple[str, str, str, str]]) -> list[str]
             block += f"🔗 <{link}>\n"
 
         if desc:
-            snippet = desc[:120] + ("..." if len(desc) > 120 else "")
+            snippet = desc[:200] + ("..." if len(desc) > 200 else "")
             block += f"📝 {snippet}\n"
 
         block += "\n"
@@ -256,31 +232,3 @@ def format_discord_message(events: list[tuple[str, str, str, str]]) -> list[str]
         chunks.append(cur)
 
     return chunks
-
-
-if __name__ == "__main__":
-    import requests
-    from dotenv import load_dotenv
-
-    load_dotenv()
-    webhook_url = os.environ.get("EVENTS_WEBHOOK_URL")
-
-    events = asyncio.run(scrape_uts_events_week_next())
-    print(f"[uts_events] {len(events)} events for next week")
-
-    for e in events:
-        print(f"  {e[0]} | {e[1]} | {e[3]}")
-
-    if webhook_url:
-        for msg in format_discord_message(events):
-            resp = requests.post(
-                webhook_url,
-                json={"content": msg},
-                timeout=15,
-            )
-            if resp.status_code == 204:
-                print("[uts_events] Sent.")
-            else:
-                print(f"[uts_events] Send failed: {resp.status_code} {resp.text}")
-    else:
-        print("[uts_events] EVENTS_WEBHOOK_URL not set – skipping send.")
