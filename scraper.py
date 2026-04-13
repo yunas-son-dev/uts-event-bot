@@ -105,10 +105,9 @@ async def run_events(dry_run: bool) -> tuple[int, int]:
     # apply single-day display policy only here
     single_day_events = [
         e for e in events
-        if re.fullmatch(r"\d{1,2}\s+[A-Za-z]{3}", e[0])
+        if "-" not in e[0] and "–" not in e[0]
     ]
-
-    print(
+        print(
         f"[scraper] Filtered to {len(single_day_events)} "
         f"single-day events."
     )
