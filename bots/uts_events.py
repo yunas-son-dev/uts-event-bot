@@ -8,6 +8,7 @@ from playwright.async_api import async_playwright, TimeoutError as PlaywrightTim
 BASE_URL = "https://www.activateuts.com.au/events/?orderby=featured"
 CARDS_SELECTOR = "div.tile.tile--event"
 SCRAPE_TIMEOUT = 300  # 5 minutes
+MAX_PAGES = 10  # Hard cap — site may return the same page indefinitely
 
 DATE_RE = re.compile(
     r"(\d{1,2})\s+(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)",
@@ -54,13 +55,18 @@ def _parse_dates(text: str) -> list[date]:
 async def _scrape() -> list[tuple[str, str, str, str]]:
     events: list[tuple[str, str, str, str]] = []
     start_of_week, end_of_week = _next_week_range_sydney()
+    today = _sydney_today()
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         try:
             page_num = 1
+            prev_first_url: str | None = None
 
             while True:
+                if page_num > MAX_PAGES:
+                    print(f"[uts_events] MAX_PAGES ({MAX_PAGES}) reached – stopping.")
+                    break
                 # The Events Calendar supports ?tribe_paged=N; fall back to page_num
                 if page_num == 1:
                     url = BASE_URL
@@ -82,6 +88,21 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                     if count == 0:
                         print("[uts_events] No cards – stopping pagination.")
                         break
+
+                    # Detect when the site returns the same page repeatedly
+                    # (tribe_paged= is ignored by some WordPress themes).
+                    first_url_el = cards.nth(0).locator("a[href*='/events/']").first
+                    curr_first_url = (
+                        await first_url_el.get_attribute("href") or ""
+                        if await first_url_el.count() else ""
+                    )
+                    if curr_first_url and curr_first_url == prev_first_url:
+                        print(
+                            f"[uts_events] Page {page_num} repeats page {page_num - 1} "
+                            f"– pagination exhausted, stopping."
+                        )
+                        break
+                    prev_first_url = curr_first_url
 
                     all_past_end = True
 
@@ -118,6 +139,7 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                             # --- Date text ---
                             date_text = ""
                             for sel in [
+                                ".tile__badge",          # e.g. "9 FEB - 8 JUN" or "16 APR"
                                 "time",
                                 ".tribe-event-date-start",
                                 ".tile__date",
@@ -131,6 +153,10 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
                                         break
                             if not date_text:
                                 date_text = await card.inner_text()
+                            print(
+                                f"[uts_events] Page {page_num} card {i}: "
+                                f"date_text={date_text!r}"
+                            )
 
                             # --- Description ---
                             desc = ""
@@ -146,13 +172,24 @@ async def _scrape() -> list[tuple[str, str, str, str]]:
 
                             # --- Date filtering ---
                             dates = _parse_dates(date_text)
+                            print(
+                                f"[uts_events] Page {page_num} card {i}: "
+                                f"parsed dates={dates}"
+                            )
                             if not dates:
                                 continue
 
                             event_start = min(dates)
                             event_end = max(dates)
 
-                            if event_start <= end_of_week:
+                            # Stop-condition guard: only count events that started
+                            # recently (within 7 days) or are upcoming.
+                            # Semester-long programs (e.g. "9 FEB – 8 JUN") have
+                            # stale start dates and appear pinned on every page;
+                            # letting them set all_past_end=False causes infinite
+                            # pagination since their event_start is always <= end_of_week.
+                            recently_or_upcoming = event_start > today - timedelta(days=7)
+                            if recently_or_upcoming and event_start <= end_of_week:
                                 all_past_end = False
 
                             # Keep only events that overlap next week
