@@ -24,13 +24,7 @@ def _next_week_range_sydney() -> tuple[date, date]:
 
 async def _scrape() -> list[tuple[str, str, str, str]]:
     events = []
-    #start_of_week, end_of_week = _next_week_range_sydney()
-    # 임시 변경
-    from datetime import date
-    today = _sydney_today()
-    this_monday = today - timedelta(days=today.weekday())
-    this_sunday = this_monday + timedelta(days=6)
-    start_of_week, end_of_week = this_monday, this_sunday
+    start_of_week, end_of_week = _next_week_range_sydney()
     today = _sydney_today()
 
     async with async_playwright() as p:
