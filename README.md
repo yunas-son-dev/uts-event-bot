@@ -4,7 +4,7 @@ A GitHub Actions-based bot that automatically delivers UTS campus events, IT job
 
 ## Features
 
-- Weekly UTS Events — Scrapes ActivateUTS and posts next week's events every Monday
+- Weekly UTS Events — Scrapes ActivateUTS and posts next week's events every Sunday
 - Weekly IT Jobs — Scrapes Sydney-based IT graduate roles and internships from Prosple
 - Monthly Academic Calendar — Posts important UTS academic dates on the 1st of every month
 - Discord Invite Rotation — Automatically refreshes the latest invite link for onboarding
